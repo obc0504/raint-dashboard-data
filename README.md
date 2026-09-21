@@ -11,11 +11,15 @@
 ## 담고 있는 내용
 
 - `naver.json`, `cafe24.json` — API로 자동 수집(채널별 주문 6~8컬럼 집계: 주문일/채널/상품명/수량/판매금액/주문번호/정산예정금액/주문상태)
-- `wconcept.json`, `29cm.json`, `musinsa.json`, `kakao.json` — API 연동이 없는 채널. 사장님이 각 채널 관리자센터에서 받은 주문 엑셀을 `scripts/import-*.mjs`로 수동 임포트
+- `wconcept.json`, `29cm.json`, `musinsa.json`, `kakao.json`, `qoo10.json` — API 연동이 없는 채널. 사장님이 각 채널 관리자센터에서 받은 주문 엑셀/CSV를 `scripts/import-*.mjs`로 수동 임포트
 - `meta.json` — 채널별 마지막 수집 시각 (`{ "naver": "ISO8601", ... }`), 대시보드 상단 "마지막 수집" 표시에 사용
 - **개인정보 없음** — 고객명·연락처·주소 등은 절대 포함하지 않습니다.
+
+큐텐(`qoo10.json`)만 특이사항 둘:
+- 원래 엔화(JPY) 매출이라 고정 환율 1엔=9.5원으로 환산해 `판매금액`(원화)에 넣고, 원본 엔화 금액은 `판매금액_엔`에 같이 남겨둠(검산용).
+- 상품명·옵션은 원래 일본어라 `raint-dashboard/scripts/lib/qoo10-dict.json`(일↔한 번역 사전, 이 저장소가 아니라 코드 저장소에 있음)으로 자동 번역해서 저장함. 새 파일을 넣을 때마다 그 파일에 번역이 들어있으면 사전이 같이 갱신됨.
 
 ## 누가 갱신하나
 
 - `naver.json`, `cafe24.json`, `meta.json` — PC의 `run-daily.bat`(Windows 작업 스케줄러, 매시간)이 네이버·카페24 API에서 받은 데이터를 자동으로 커밋·푸시
-- `wconcept.json`, `29cm.json`, `musinsa.json`, `kakao.json` — 사장님이 각 채널 주문 엑셀을 다운로드한 뒤 `npm run import:<채널>`을 수동으로 실행할 때마다 갱신
+- `wconcept.json`, `29cm.json`, `musinsa.json`, `kakao.json`, `qoo10.json` — 사장님이 각 채널 주문 엑셀/CSV를 다운로드한 뒤 `npm run import:<채널>`을 수동으로 실행할 때마다 갱신
