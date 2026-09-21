@@ -10,9 +10,12 @@
 
 ## 담고 있는 내용
 
-- `naver.json`, `cafe24.json` — 채널별 주문 6~8컬럼 집계 (주문일/채널/상품명/수량/판매금액/주문번호/정산예정금액/주문상태)
+- `naver.json`, `cafe24.json` — API로 자동 수집(채널별 주문 6~8컬럼 집계: 주문일/채널/상품명/수량/판매금액/주문번호/정산예정금액/주문상태)
+- `wconcept.json`, `29cm.json`, `musinsa.json`, `kakao.json` — API 연동이 없는 채널. 사장님이 각 채널 관리자센터에서 받은 주문 엑셀을 `scripts/import-*.mjs`로 수동 임포트
+- `meta.json` — 채널별 마지막 수집 시각 (`{ "naver": "ISO8601", ... }`), 대시보드 상단 "마지막 수집" 표시에 사용
 - **개인정보 없음** — 고객명·연락처·주소 등은 절대 포함하지 않습니다.
 
 ## 누가 갱신하나
 
-PC의 `run-daily.bat`(Windows 작업 스케줄러, 매시간)이 네이버·카페24 API에서 받은 데이터를 이 저장소로 커밋·푸시합니다.
+- `naver.json`, `cafe24.json`, `meta.json` — PC의 `run-daily.bat`(Windows 작업 스케줄러, 매시간)이 네이버·카페24 API에서 받은 데이터를 자동으로 커밋·푸시
+- `wconcept.json`, `29cm.json`, `musinsa.json`, `kakao.json` — 사장님이 각 채널 주문 엑셀을 다운로드한 뒤 `npm run import:<채널>`을 수동으로 실행할 때마다 갱신
