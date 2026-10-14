@@ -10,6 +10,7 @@
   - 상품명 변경 이력은 PRODUCT_ALIAS로 합쳐서 집계
   - 주력 채널 중 전주비 또는 전월비 -10% 이하인 채널은 상품별 표를 추가 출력
     (상품별 단가 = 판매금액 합 / 수량 합, 할인 반영 실판매가)
+  - 하락이 없고 전주비가 오른 주력 채널은 증가 상위 상품 표를 출력
   - 취소성 주문 제외(정확일치 CANCELED/CANCEL/RETURNED/RETURN/EXCHANGED,
     또는 취소/반품/교환/환불/결제오류 포함), 단 '반려' 포함 시 유지
 """
@@ -23,6 +24,7 @@ FILES = ["cafe24", "wconcept", "29cm", "musinsa", "kakao", "qoo10"]
 EXACT = {"CANCELED", "CANCEL", "RETURNED", "RETURN", "EXCHANGED"}
 KEYWORDS = ["취소", "반품", "교환", "환불", "결제오류"]
 MAIN_CHANNELS = ["네이버", "자사몰", "29CM", "무신사", "카톡선물", "큐텐"]
+RISE_TOP = 5
 # 옛 상품명 -> 현재 상품명 (같은 상품, 이름만 변경)
 PRODUCT_ALIAS = {
     "버블 핸드워시 500ml 2개입 세트": "퍼퓸 핸드솝 500ml 2개입 세트",
@@ -124,29 +126,23 @@ def main():
             cells += [f"{p:,}", pct(cur[0], p)]
         print("| " + " | ".join(cells) + " |")
     print()
-    for ch in MAIN_CHANNELS:
-        a = agg.get(ch)
-        if not a:
-            continue
-        cur = a[b][0]
-        drops = [k for k in ("전주", "전월")
-                 if a[cmp[k].isoformat()][0] and
-                 (cur - a[cmp[k].isoformat()][0]) / a[cmp[k].isoformat()][0] <= -0.10]
-        if not drops:
-            continue
-        print(f"### {ch} 상품별 ({'/'.join(drops)}비 -10% 이하) — 매출(원)(수량)")
+    w = cmp["전주"].isoformat()
+    keys = [b] + [d.isoformat() for d in cmp.values()]
+
+    def product_table(ch, title, rising):
+        items = [(n, v) for (c, n), v in prod.items() if c == ch]
+        items.sort(key=lambda kv: kv[1][b][0] - kv[1][w][0], reverse=rising)
+        if rising:  # 상승 채널은 전주 대비 증가 상품 상위만
+            items = [kv for kv in items if kv[1][b][0] - kv[1][w][0] > 0][:RISE_TOP]
+        print(f"### {ch} 상품별 ({title}) — 매출(원)(수량)")
         print("| 상품 | 기준일 | 전일 | 전주 | 전월 | 전주 대비 증감(원) "
               "| 단가 기준일 | 단가 전일 | 단가 전주 | 단가 전월 | 최근단가 전월비 |")
         print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
-        items = [(n, v) for (c, n), v in prod.items() if c == ch]
-        w = cmp["전주"].isoformat()
-        for n, v in sorted(items, key=lambda kv: kv[1][b][0] - kv[1][w][0]):
-            cells = [n] + [f"{v[x][0]:,}({v[x][1]})"
-                           for x in [b] + [d.isoformat() for d in cmp.values()]]
+        for n, v in items:
+            cells = [n] + [f"{v[x][0]:,}({v[x][1]})" for x in keys]
             cells.append(f"{v[b][0] - v[w][0]:+,}")
             # 단가 = 판매금액 합 / 수량 합 (할인 반영 실판매가)
             # 최근단가 = 기준일 단가, 기준일 판매 없으면 전일 단가
-            keys = [b] + [d.isoformat() for d in cmp.values()]
             up = [v[x][0] / v[x][1] if v[x][1] else None for x in keys]
             cells += [f"{u:,.0f}" if u is not None else "-" for u in up]
             recent = up[0] if up[0] is not None else up[1]
@@ -154,6 +150,19 @@ def main():
                          if recent is not None and up[3] else "-")
             print("| " + " | ".join(cells) + " |")
         print()
+
+    for ch in MAIN_CHANNELS:
+        a = agg.get(ch)
+        if not a:
+            continue
+        cur = a[b][0]
+        chg = {k: (cur - a[cmp[k].isoformat()][0]) / a[cmp[k].isoformat()][0]
+               for k in ("전주", "전월") if a[cmp[k].isoformat()][0]}
+        drops = [k for k, c in chg.items() if c <= -0.10]
+        if drops:
+            product_table(ch, f"{'/'.join(drops)}비 -10% 이하", rising=False)
+        elif chg.get("전주", 0) > 0:
+            product_table(ch, f"전주비 상승, 증가 상위 {RISE_TOP}개", rising=True)
     print("취소성 제외(센티카): " + ", ".join(
         f"{days[d]} {d} {cancel[d][0]}건/{cancel[d][1]:,}원" for d in days))
 
