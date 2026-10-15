@@ -5,9 +5,12 @@
 """
 import html, re, sys
 
-STYLE = ("<style>table{border-collapse:collapse;font-size:13px;margin:8px 0}"
-         "td,th{border:1px solid #d0d7de;padding:4px 8px}th{background:#f6f8fa}"
-         "td.r{text-align:right}</style>")
+# 메일 서비스가 <style>을 지우는 경우가 있어 모든 스타일을 태그에 직접 넣음
+TABLE = ('<table border="1" cellpadding="5" cellspacing="0" '
+         'style="border-collapse:collapse;border:1px solid #999;font-size:13px;margin:8px 0">')
+TH = '<th bgcolor="#eef1f5" nowrap style="border:1px solid #999">'
+TD = '<td style="border:1px solid #999">'
+TDR = '<td align="right" nowrap style="border:1px solid #999">'
 
 
 def inline(t):
@@ -28,14 +31,14 @@ def convert(md):
         ln = lines[i]
         if ln.startswith("|") and i + 1 < len(lines) and re.match(r"^\|[\s:|-]+\|$", lines[i + 1].strip()):
             align = ["right" if c.endswith(":") else "left" for c in cells(lines[i + 1])]
-            out.append("<table>")
-            out.append("<tr>" + "".join(f"<th>{inline(c)}</th>" for c in cells(ln)) + "</tr>")
+            out.append(TABLE)
+            out.append("<tr>" + "".join(f"{TH}{inline(c)}</th>" for c in cells(ln)) + "</tr>")
             i += 2
             while i < len(lines) and lines[i].startswith("|"):
                 row = cells(lines[i])
                 out.append("<tr>" + "".join(
-                    (f'<td class="r">{inline(c)}</td>' if k < len(align) and align[k] == "right"
-                     else f"<td>{inline(c)}</td>")
+                    (f"{TDR}{inline(c)}</td>" if k < len(align) and align[k] == "right"
+                     else f"{TD}{inline(c)}</td>")
                     for k, c in enumerate(row)) + "</tr>")
                 i += 1
             out.append("</table>")
@@ -55,7 +58,7 @@ def convert(md):
         elif ln.strip():
             out.append(f"<p>{inline(ln)}</p>")
         i += 1
-    return (STYLE + '<div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;'
+    return ('<div style="font-family:Apple SD Gothic Neo,Malgun Gothic,sans-serif;'
             'font-size:14px;color:#1f2328;line-height:1.5">' + "\n".join(out) + "</div>")
 
 
