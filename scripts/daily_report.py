@@ -7,6 +7,7 @@
   - 브랜드 없으면 '센티카', 센티카만 집계
     (gmarket_auction/coupang_wing/ohouse/coupang_rocket은 100% 에이센트라 받지 않음)
   - 매출 = 판매금액 합 (품목 행 단위)
+  - 채널 표 다음에 전일 1:1 비교 표(매출/수량/주문) 출력
   - 상품명 변경 이력은 PRODUCT_ALIAS로 합쳐서 집계
   - 주력 채널 중 전주비 또는 전월비 -10% 이하인 채널은 상품별 표를 추가 출력
     (상품별 단가 = 판매금액 합 / 수량 합, 할인 반영 실판매가)
@@ -126,6 +127,22 @@ def main():
             cells += [f"{p:,}", pct(cur[0], p)]
         print("| " + " | ".join(cells) + " |")
     print()
+    # 전일 1:1 비교 (매출 / 수량 / 주문)
+    y = cmp["전일"].isoformat()
+    print(f"### 전일 1:1 비교 ({b} vs {y})")
+    print("| 채널 | 매출 기준일 | 매출 전일 | 매출 증감 | 수량 기준일 | 수량 전일 | 수량 증감 "
+          "| 주문 기준일 | 주문 전일 | 주문 증감 |")
+    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for ch in chans + ["합계"]:
+        cur, prv = agg[ch][b], agg[ch][y]
+        co, po = len(cur[2]), len(prv[2])
+        cells = [f"**{ch}**" if ch == "합계" else ch,
+                 f"{cur[0]:,}", f"{prv[0]:,}", pct(cur[0], prv[0]),
+                 f"{cur[1]:,}", f"{prv[1]:,}", f"{cur[1] - prv[1]:+,} ({pct(cur[1], prv[1])})",
+                 f"{co:,}", f"{po:,}", f"{co - po:+,} ({pct(co, po)})"]
+        print("| " + " | ".join(cells) + " |")
+    print()
+
     w = cmp["전주"].isoformat()
     keys = [b] + [d.isoformat() for d in cmp.values()]
 
