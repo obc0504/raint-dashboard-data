@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""센티카 전일 기준 일일 매출 비교 리포트 (전일 / 전주 동요일 / 전월 동일자).
+"""브랜드별 전일 기준 일일 매출 비교 리포트 (전일 / 전주 동요일 / 전월 동일자).
 
-사용: python3 -I scripts/daily_report.py [YYYY-MM-DD]
-  인자 없으면 KST 기준 어제를 기준일로 사용.
+사용: python3 -I scripts/daily_report.py [YYYY-MM-DD] [--brand 에이센트]
+  날짜가 없으면 KST 기준 어제, 브랜드가 없으면 센티카.
 집계 규칙은 README의 세션 기준과 동일:
-  - 브랜드 없으면 '센티카', 센티카만 집계
-    (gmarket_auction/coupang_wing/ohouse/coupang_rocket은 100% 에이센트라 받지 않음)
+  - 브랜드 없으면 '센티카'로 간주하고 지정 브랜드만 집계
+    (gmarket_auction/coupang_wing/ohouse/coupang_rocket은 100% 에이센트라
+     센티카 리포트에서는 받지 않음)
   - 매출 = 판매금액 합 (품목 행 단위)
   - 채널 표 다음에 전일 1:1 비교 표(매출/수량/주문) 출력
   - 상품명 변경 이력은 PRODUCT_ALIAS로 합쳐서 집계
   - 주력 채널 중 전주비 또는 전월비 -10% 이하인 채널은 상품별 표를 추가 출력
     (상품별 단가 = 판매금액 합 / 수량 합, 할인 반영 실판매가)
   - 하락이 없고 전주비가 오른 주력 채널은 증가 상위 상품 표를 출력
+  - 하락 채널 상품 표는 전주 대비 감소 상위 10개만
+  - 수집시각이 기준일 이전인 채널은 미수집 경고와 제외 합계를 출력
   - 취소성 주문 제외(정확일치 CANCELED/CANCEL/RETURNED/RETURN/EXCHANGED,
     또는 취소/반품/교환/환불/결제오류 포함), 단 '반려' 포함 시 유지
 """
@@ -22,10 +25,19 @@ from datetime import date, datetime, timedelta, timezone
 BASE = "https://raw.githubusercontent.com/obc0504/raint-dashboard-data/main/"
 BRAND = "센티카"
 FILES = ["cafe24", "wconcept", "29cm", "musinsa", "kakao", "qoo10"]
+AICENT_FILES = ["gmarket_auction", "coupang_wing", "ohouse", "coupang_rocket"]
 EXACT = {"CANCELED", "CANCEL", "RETURNED", "RETURN", "EXCHANGED"}
 KEYWORDS = ["취소", "반품", "교환", "환불", "결제오류"]
 MAIN_CHANNELS = ["네이버", "자사몰", "29CM", "무신사", "카톡선물", "큐텐"]
+AICENT_MAIN = ["네이버", "쿠팡윙", "자사몰", "쿠팡로켓", "카톡선물", "오늘의집", "지마켓", "옥션"]
 RISE_TOP = 5
+DROP_TOP = 10
+# 데이터 파일 -> 채널명 (수집시각 확인용)
+FILE_CHANNELS = {"naver": ["네이버"], "cafe24": ["자사몰"], "wconcept": ["W컨셉"],
+                 "29cm": ["29CM"], "musinsa": ["무신사"], "kakao": ["카톡선물"],
+                 "qoo10": ["큐텐"], "gmarket_auction": ["지마켓", "옥션"],
+                 "coupang_wing": ["쿠팡윙"], "ohouse": ["오늘의집"],
+                 "coupang_rocket": ["쿠팡로켓"]}
 # 옛 상품명 -> 현재 상품명 (같은 상품, 이름만 변경)
 PRODUCT_ALIAS = {
     "버블 핸드워시 500ml 2개입 세트": "퍼퓸 핸드솝 500ml 2개입 세트",
@@ -68,8 +80,18 @@ def pct(cur, prev):
 
 
 def main():
+    global BRAND, FILES, MAIN_CHANNELS
+    args = sys.argv[1:]
+    if "--brand" in args:
+        i = args.index("--brand")
+        BRAND = args[i + 1]
+        del args[i:i + 2]
+    if BRAND != "센티카":
+        FILES = FILES + AICENT_FILES
+    if BRAND == "에이센트":
+        MAIN_CHANNELS = AICENT_MAIN
     kst = timezone(timedelta(hours=9))
-    base = (date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1
+    base = (date.fromisoformat(args[0]) if args
             else datetime.now(kst).date() - timedelta(days=1))
     cmp = {"전일": base - timedelta(days=1),
            "전주": base - timedelta(days=7),
@@ -113,6 +135,22 @@ def main():
     print(f"# {BRAND} 일일 매출 비교 — 기준일 {b} ({'월화수목금토일'[base.weekday()]})")
     print("비교일: " + ", ".join(f"{k} {v.isoformat()}" for k, v in cmp.items()))
     print("수집시각(UTC): " + json.dumps(meta, ensure_ascii=False))
+    # 기준일 다음날(KST) 이후에 수집되지 않은 파일의 채널은 미수집으로 표시
+    stale = []
+    for f, chs in FILE_CHANNELS.items():
+        t = meta.get(f)
+        if not t:
+            continue
+        got = datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(kst).date()
+        if got <= base:
+            stale += [c for c in chs if c in agg]
+    if stale:
+        ok = [c for c in agg if c != "합계" and c not in stale]
+        def tot(d):
+            return sum(agg[c][d][0] for c in ok)
+        print(f"⚠️ 데이터 미수집 의심: {', '.join(stale)} (수집시각이 기준일 이전) — 해석에서 제외")
+        print(f"미수집 채널 제외 합계: 기준일 {tot(b):,} / " + " / ".join(
+            f"{k} {tot(v.isoformat()):,} ({pct(tot(b), tot(v.isoformat()))})" for k, v in cmp.items()))
     print()
     chans = sorted((c for c in agg if c != "합계"), key=lambda c: -agg[c][b][0])
     print("| 채널 | 기준일 매출(원) | 수량(개) | 주문(건) | 전일 매출 | 전일비 | 전주 매출 | 전주비 | 전월 매출 | 전월비 |")
@@ -151,6 +189,8 @@ def main():
         items.sort(key=lambda kv: kv[1][b][0] - kv[1][w][0], reverse=rising)
         if rising:  # 상승 채널은 전주 대비 증가 상품 상위만
             items = [kv for kv in items if kv[1][b][0] - kv[1][w][0] > 0][:RISE_TOP]
+        else:  # 하락 채널은 전주 대비 감소 상품 상위만
+            items = [kv for kv in items if kv[1][b][0] - kv[1][w][0] < 0][:DROP_TOP]
         print(f"### {ch} 상품별 ({title}) — 매출(원)(수량)")
         print("| 상품 | 기준일 | 전일 | 전주 | 전월 | 전주 대비 증감(원) "
               "| 단가 기준일 | 단가 전일 | 단가 전주 | 단가 전월 | 최근단가 전월비 |")
@@ -180,7 +220,7 @@ def main():
             product_table(ch, f"{'/'.join(drops)}비 -10% 이하", rising=False)
         elif chg.get("전주", 0) > 0:
             product_table(ch, f"전주비 상승, 증가 상위 {RISE_TOP}개", rising=True)
-    print("취소성 제외(센티카): " + ", ".join(
+    print(f"취소성 제외({BRAND}): " + ", ".join(
         f"{days[d]} {d} {cancel[d][0]}건/{cancel[d][1]:,}원" for d in days))
 
 
