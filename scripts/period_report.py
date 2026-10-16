@@ -21,7 +21,7 @@
   - 수집시각이 기간 마지막 날 이전인 채널은 미수집 경고와 제외 합계를 출력
   - 시간대별 매출(네이버·자사몰만, 주문 시각이 있는 채널)
 """
-import calendar, http.client, json, sys, time, urllib.request
+import calendar, http.client, json, sys, time, urllib.error, urllib.request
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 
@@ -29,6 +29,8 @@ BASE = "https://raw.githubusercontent.com/obc0504/raint-dashboard-data/main/"
 KST = timezone(timedelta(hours=9))
 BRAND = "센티카"
 FILES = ["cafe24", "wconcept", "29cm", "musinsa", "kakao", "qoo10"]
+# 채널 어드민에서 따로 받은 과거 월 데이터 (kakao.json 수동 임포트와 별개 파일)
+ARCHIVE_FILES = ["kakao-2025-12"]
 AICENT_FILES = ["gmarket_auction", "coupang_wing", "ohouse", "coupang_rocket"]
 EXACT = {"CANCELED", "CANCEL", "RETURNED", "RETURN", "EXCHANGED"}
 KEYWORDS = ["취소", "반품", "교환", "환불", "결제오류"]
@@ -61,6 +63,17 @@ def get(path, tries=4):
             if i == tries - 1:
                 raise
             time.sleep(2 ** (i + 1))
+
+
+def get_optional(path):
+    """저장소에 없을 수도 있는 파일: 404면 빈 목록."""
+    try:
+        with urllib.request.urlopen(BASE + path, timeout=120) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return []
+        raise
 
 
 def is_cancel(status):
@@ -106,6 +119,8 @@ class Data:
         rows = []
         for f in FILES:
             rows += get(f + ".json")
+        for f in ARCHIVE_FILES:  # 과거 월 데이터 (없으면 건너뜀)
+            rows += get_optional(f + ".json")
         months = {(lo + timedelta(days=i)).strftime("%Y-%m") for i in range((hi - lo).days + 1)}
         for ym in get("naver-index.json"):
             if ym in months:
