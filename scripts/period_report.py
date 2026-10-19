@@ -19,7 +19,7 @@
   - 상품명 변경 이력은 PRODUCT_ALIAS로 합쳐서 집계
   - 상품별 단가 = 판매금액 합 / 수량 합 (할인 반영 실판매가)
   - 수집시각이 기간 마지막 날 이전인 채널은 미수집 경고와 제외 합계를 출력
-  - 시간대별 매출(네이버·자사몰만, 주문 시각이 있는 채널)
+  - 시간대별 매출(주문 시각이 있는 채널만, 표 제목에 채널 표시)
 """
 import calendar, http.client, json, sys, time, urllib.error, urllib.request
 from collections import defaultdict
@@ -403,8 +403,10 @@ def status(today):
     print(f"(센티카 데이터 수집 날짜 KST: {got.isoformat()})")
 
 
-# 시간대 분석: 주문 시각이 있는 채널(네이버 주문일시, 자사몰 결제완료일시)만 가능
-HOUR_FIELDS = {"네이버": "주문일시", "자사몰": "결제완료일시"}
+# 시간대 분석: 주문 시각이 있는 채널만 가능 (네이버 주문일시, 자사몰 결제완료일시,
+# 카톡선물·W컨셉·큐텐은 임포트가 주문일시를 저장한 행부터 — W컨셉은 원본 결제일자)
+HOUR_FIELDS = {"네이버": "주문일시", "자사몰": "결제완료일시",
+               "카톡선물": "주문일시", "W컨셉": "주문일시", "큐텐": "주문일시"}
 TIME_BLOCKS = [(0, 6), (6, 9), (9, 12), (12, 15), (15, 18), (18, 21), (21, 24)]
 
 
@@ -417,6 +419,7 @@ def hour_of(r):
 def hourly_table(rows, ranges, title):
     """ranges = [(라벨, 시작일, 끝일)] — 첫 번째가 기준. 시간대별 매출/주문/비중."""
     agg = {lab: [[0, set()] for _ in range(24)] for lab, _, _ in ranges}
+    used = set()  # 실제로 시각이 있었던 채널 (표 제목에 표시)
     for r in rows:
         if (r.get("브랜드") or "센티카") != BRAND or is_cancel(r.get("주문상태")):
             continue
@@ -428,7 +431,9 @@ def hourly_table(rows, ranges, title):
             if s.isoformat() <= d <= e.isoformat():
                 agg[lab][h][0] += r.get("판매금액") or 0
                 agg[lab][h][1].add(r.get("주문번호"))
-    print(f"### {title} — 네이버·자사몰만 (다른 채널은 주문 시각 데이터 없음)")
+                used.add(r.get("채널"))
+    chs = "·".join(c for c in HOUR_FIELDS if c in used) or "해당 채널 없음"
+    print(f"### {title} — {chs}만 (다른 채널은 주문 시각 데이터 없음)")
     head = "| 시간대 | " + " | ".join(f"{lab} 매출(원) | {lab} 주문 | {lab} 비중" for lab, _, _ in ranges) + " |"
     print(head)
     print("|---|" + "---:|" * (3 * len(ranges)))

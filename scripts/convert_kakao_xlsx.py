@@ -3,7 +3,7 @@
 
 사용: python3 -I scripts/convert_kakao_xlsx.py 주문.xlsx 출력.json
   - 판매금액 = 상품금액 + 옵션금액 + 추가상품금액 - 판매자할인금액 - 판매자쿠폰할인금액 (= 정산기준금액)
-  - 주문일은 날짜(YYYY-MM-DD)만, _pid는 주문번호
+  - 주문일은 날짜(YYYY-MM-DD)만, 주문일시는 원본 주문일 그대로(시각 포함), _pid는 주문번호
   - 개인정보 컬럼은 원본에도 없고 결과에도 넣지 않음
 """
 import json, sys
@@ -25,6 +25,7 @@ def main(src, dst):
             continue
         out.append({
             "주문일": str(r["주문일"])[:10],
+            "주문일시": str(r["주문일"]),
             "채널": "카톡선물",
             "브랜드": r.get("브랜드") or "센티카",
             "상품명": r["상품명"],
