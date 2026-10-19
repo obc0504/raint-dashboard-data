@@ -433,13 +433,24 @@ def hourly_table(rows, ranges, title):
     """ranges = [(라벨, 시작일, 끝일)] — 첫 번째가 기준. 시간대별 매출/주문/비중."""
     agg = {lab: [[0, set()] for _ in range(24)] for lab, _, _ in ranges}
     used = set()  # 실제로 시각이 있었던 채널 (표 제목에 표시)
+    # 채널별로 판매가 있던 날 / 그중 시각이 있던 날 — 임포트가 시각을 저장하기
+    # 시작한 지 얼마 안 된 채널은 비교 기간 일부만 들어가므로 표 아래에 표시
+    sold_days = {lab: defaultdict(set) for lab, _, _ in ranges}
+    timed_days = {lab: defaultdict(set) for lab, _, _ in ranges}
     for r in rows:
         if (r.get("브랜드") or "센티카") != BRAND or is_cancel(r.get("주문상태")):
             continue
+        d = str(r.get("주문일", ""))[:10]
+        ch = r.get("채널")
         h = hour_of(r)
+        if ch in HOUR_FIELDS:
+            for lab, s, e in ranges:
+                if s.isoformat() <= d <= e.isoformat():
+                    sold_days[lab][ch].add(d)
+                    if h is not None:
+                        timed_days[lab][ch].add(d)
         if h is None:
             continue
-        d = str(r.get("주문일", ""))[:10]
         for lab, s, e in ranges:
             if s.isoformat() <= d <= e.isoformat():
                 agg[lab][h][0] += r.get("판매금액") or 0
@@ -462,6 +473,13 @@ def hourly_table(rows, ranges, title):
     for lab, _, _ in ranges:
         cells += [f"**{tot[lab]:,}**", f"**{len(set().union(*(x[1] for x in agg[lab]))):,}**", "100%" if tot[lab] else "-"]
     print("| " + " | ".join(cells) + " |")
+    for lab, _, _ in ranges:
+        part = [f"{ch} {len(timed_days[lab][ch])}/{len(sold_days[lab][ch])}일"
+                for ch in HOUR_FIELDS
+                if timed_days[lab][ch] and len(timed_days[lab][ch]) < len(sold_days[lab][ch])]
+        if part:
+            print(f"- ⚠️ {lab}: 시각 데이터가 일부 날짜만 있음({', '.join(part)} — 시각 있는 날/판매일) "
+                  f"→ 이 채널이 포함된 비중은 다른 기간과 바로 비교하지 말 것")
     for lab, _, _ in ranges:
         if tot[lab]:
             top = sorted(range(24), key=lambda h: -agg[lab][h][0])[:3]
