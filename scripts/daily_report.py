@@ -3,6 +3,9 @@
 
 사용: python3 -I scripts/daily_report.py [YYYY-MM-DD] [--brand 에이센트]
   날짜가 없으면 KST 기준 어제, 브랜드가 없으면 센티카.
+  기준일이 일요일이면(월요일 발송분) 금~일 3일을 하나로 묶어
+  직전 3일(화~목) / 전주 금~일 / 전월 동일자 3일과 비교하고,
+  1:1 비교는 전주 금~일, 요일별 표(각 요일 vs 전주 같은 요일)를 추가.
 집계 규칙은 README의 세션 기준과 동일:
   - 브랜드 없으면 '센티카'로 간주하고 지정 브랜드만 집계
     (gmarket_auction/coupang_wing/ohouse/coupang_rocket은 100% 에이센트라
@@ -155,10 +158,41 @@ def main():
     kst = timezone(timedelta(hours=9))
     base = (date.fromisoformat(args[0]) if args
             else datetime.now(kst).date() - timedelta(days=1))
-    cmp = {"전일": base - timedelta(days=1),
-           "전주": base - timedelta(days=7),
-           "전월": month_back(base)}
-    days = {base.isoformat(): "기준일"} | {v.isoformat(): k for k, v in cmp.items()}
+    WD = "월화수목금토일"
+    # 기준일이 일요일이면 월요일 발송분: 금~일 3일을 하나의 기준 기간으로 집계
+    weekend = base.weekday() == 6
+    start = base - timedelta(days=2) if weekend else base
+    span = (base - start).days + 1
+    if weekend:
+        periods = {"기준": (start, base),
+                   "직전3일": (start - timedelta(days=3), start - timedelta(days=1)),
+                   "전주": (start - timedelta(days=7), base - timedelta(days=7)),
+                   "전월": (month_back(start), month_back(base))}
+        one = "전주"  # 1:1 비교 대상: 요일이 같은 전주 금~일
+    else:
+        periods = {"기준": (base, base),
+                   "전일": (base - timedelta(days=1), base - timedelta(days=1)),
+                   "전주": (base - timedelta(days=7), base - timedelta(days=7)),
+                   "전월": (month_back(base), month_back(base))}
+        one = "전일"
+    cmp = {k: v for k, v in periods.items() if k != "기준"}
+
+    def fmt(p):
+        s_, e_ = p
+        if s_ == e_:
+            return f"{s_.isoformat()}({WD[s_.weekday()]})"
+        return f"{s_.isoformat()}({WD[s_.weekday()]})~{e_.isoformat()}({WD[e_.weekday()]})"
+
+    # 날짜 -> 속한 기간 라벨 (금~일 모드의 요일별 표를 위해 기준 기간 각 날짜와 D-7도 따로)
+    day_labels = defaultdict(list)
+    for lab, (s_, e_) in periods.items():
+        for i in range((e_ - s_).days + 1):
+            day_labels[(s_ + timedelta(days=i)).isoformat()].append(lab)
+    if weekend:
+        for i in range(span):
+            d = start + timedelta(days=i)
+            day_labels[d.isoformat()].append(d.isoformat())
+            day_labels[(d - timedelta(days=7)).isoformat()].append((d - timedelta(days=7)).isoformat())
 
     meta = get("meta.json")
     rows = []
@@ -166,40 +200,44 @@ def main():
         rows += get(f + ".json")
     for f in ARCHIVE_FILES:  # 과거 월 데이터 (없으면 건너뜀)
         rows += get_optional(f + ".json")
-    months = {d[:7] for d in days} | {(base - timedelta(days=27)).isoformat()[:7]}
+    months = {d[:7] for d in day_labels} | {(base - timedelta(days=27)).isoformat()[:7]}
     for ym in get("naver-index.json"):
         if ym in months:
             rows += get(f"naver/{ym}.json")
 
-    # agg[channel][day] = [매출, 수량, 주문번호set]
+    # agg[channel][label] = [매출, 수량, 주문번호set]
     agg = defaultdict(lambda: defaultdict(lambda: [0, 0, set()]))
-    cancel = defaultdict(lambda: [0, 0])  # day -> [제외 건수, 제외 금액]
-    prod = defaultdict(lambda: defaultdict(lambda: [0, 0]))  # (채널, 상품)[day]
+    cancel = defaultdict(lambda: [0, 0])  # label -> [제외 건수, 제외 금액]
+    prod = defaultdict(lambda: defaultdict(lambda: [0, 0]))  # (채널, 상품)[label]
     for r in rows:
         d = str(r.get("주문일", ""))[:10]
-        if d not in days or (r.get("브랜드") or "센티카") != BRAND:
+        if d not in day_labels or (r.get("브랜드") or "센티카") != BRAND:
             continue
         amt = r.get("판매금액") or 0
+        labs = day_labels[d]
         if is_cancel(r.get("주문상태")):
-            cancel[d][0] += 1
-            cancel[d][1] += amt
+            for lab in labs:
+                cancel[lab][0] += 1
+                cancel[lab][1] += amt
             continue
         ch = r.get("채널") or "(미지정)"
-        for key in (ch, "합계"):
-            a = agg[key][d]
-            a[0] += amt
-            a[1] += r.get("수량") or 0
-            a[2].add(r.get("주문번호"))
         name = r.get("상품명") or "(미지정)"
-        pr = prod[(ch, PRODUCT_ALIAS.get(name, name))][d]
-        pr[0] += amt
-        pr[1] += r.get("수량") or 0
+        for lab in labs:
+            for key in (ch, "합계"):
+                a = agg[key][lab]
+                a[0] += amt
+                a[1] += r.get("수량") or 0
+                a[2].add(r.get("주문번호"))
+            pr = prod[(ch, PRODUCT_ALIAS.get(name, name))][lab]
+            pr[0] += amt
+            pr[1] += r.get("수량") or 0
 
-    b = base.isoformat()
-    print(f"# {BRAND} 일일 매출 비교 — 기준일 {b} ({'월화수목금토일'[base.weekday()]})")
-    print("비교일: " + ", ".join(f"{k} {v.isoformat()}" for k, v in cmp.items()))
+    b = "기준"
+    title = "금·토·일 매출 비교 (월요일 발송분)" if weekend else "일일 매출 비교"
+    print(f"# {BRAND} {title} — 기준 {fmt(periods[b])}")
+    print("비교: " + ", ".join(f"{k} {fmt(v)}" for k, v in cmp.items()))
     print("수집시각(UTC): " + json.dumps(meta, ensure_ascii=False))
-    # 기준일 다음날(KST) 이후에 수집되지 않은 파일의 채널은 미수집으로 표시
+    # 기준 마지막 날 다음날(KST) 이후에 수집되지 않은 파일의 채널은 미수집으로 표시
     stale = []
     for f, chs in FILE_CHANNELS.items():
         t = meta.get(f)
@@ -210,33 +248,33 @@ def main():
             stale += [c for c in chs if c in agg]
     if stale:
         ok = [c for c in agg if c != "합계" and c not in stale]
-        def tot(d):
-            return sum(agg[c][d][0] for c in ok)
+        def tot(lab):
+            return sum(agg[c][lab][0] for c in ok)
         print(f"⚠️ 데이터 미수집 의심: {', '.join(stale)} (수집시각이 기준일 이전) — 해석에서 제외")
-        print(f"미수집 채널 제외 합계: 기준일 {tot(b):,} / " + " / ".join(
-            f"{k} {tot(v.isoformat()):,} ({pct(tot(b), tot(v.isoformat()))})" for k, v in cmp.items()))
+        print(f"미수집 채널 제외 합계: 기준 {tot(b):,} / " + " / ".join(
+            f"{k} {tot(k):,} ({pct(tot(b), tot(k))})" for k in cmp))
     print()
     chans = sorted((c for c in agg if c != "합계"), key=lambda c: -agg[c][b][0])
-    print("| 채널 | 기준일 매출(원) | 수량(개) | 주문(건) | 전일 매출 | 전일비 | 전주 매출 | 전주비 | 전월 매출 | 전월비 |")
-    print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    print("| 채널 | 기준 매출(원) | 수량(개) | 주문(건) | "
+          + " | ".join(f"{k} 매출 | {k}비" for k in cmp) + " |")
+    print("|---|---:|---:|---:|" + "---:|---:|" * len(cmp))
     for ch in chans + ["합계"]:
         a = agg[ch]
         cur = a[b]
         cells = [f"**{ch}**" if ch == "합계" else ch,
                  f"{cur[0]:,}", f"{cur[1]:,}", f"{len(cur[2]):,}"]
-        for k, v in cmp.items():
-            p = a[v.isoformat()][0]
+        for k in cmp:
+            p = a[k][0]
             cells += [f"{p:,}", pct(cur[0], p)]
         print("| " + " | ".join(cells) + " |")
     print()
-    # 전일 1:1 비교 (매출 / 수량 / 주문)
-    y = cmp["전일"].isoformat()
-    print(f"### 전일 1:1 비교 ({b} vs {y})")
-    print("| 채널 | 매출 기준일 | 매출 전일 | 매출 증감 | 수량 기준일 | 수량 전일 | 수량 증감 "
-          "| 주문 기준일 | 주문 전일 | 주문 증감 |")
+    # 1:1 비교 (매출 / 수량 / 주문): 평일은 전일, 금~일은 전주 금~일
+    print(f"### {one} 1:1 비교 ({fmt(periods[b])} vs {fmt(periods[one])})")
+    print(f"| 채널 | 매출 기준 | 매출 {one} | 매출 증감 | 수량 기준 | 수량 {one} | 수량 증감 "
+          f"| 주문 기준 | 주문 {one} | 주문 증감 |")
     print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for ch in chans + ["합계"]:
-        cur, prv = agg[ch][b], agg[ch][y]
+        cur, prv = agg[ch][b], agg[ch][one]
         co, po = len(cur[2]), len(prv[2])
         cells = [f"**{ch}**" if ch == "합계" else ch,
                  f"{cur[0]:,}", f"{prv[0]:,}", pct(cur[0], prv[0]),
@@ -244,9 +282,29 @@ def main():
                  f"{co:,}", f"{po:,}", f"{co - po:+,} ({pct(co, po)})"]
         print("| " + " | ".join(cells) + " |")
     print()
+    if weekend:  # 요일별 (각 요일 vs 전주 같은 요일)
+        ds = [start + timedelta(days=i) for i in range(span)]
+        print("### 요일별 합계 (vs 전주 같은 요일)")
+        print("| 요일 | 매출(원) | 수량(개) | 주문(건) | 전주 매출 | 전주비 | 전주 수량 | 전주 주문 |")
+        print("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for d in ds:
+            cur, prv = agg["합계"][d.isoformat()], agg["합계"][(d - timedelta(days=7)).isoformat()]
+            print(f"| {d.month}/{d.day}({WD[d.weekday()]}) | {cur[0]:,} | {cur[1]:,} | {len(cur[2]):,} "
+                  f"| {prv[0]:,} | {pct(cur[0], prv[0])} | {prv[1]:,} | {len(prv[2]):,} |")
+        print()
+        print("### 요일별 채널 매출(원)")
+        print("| 채널 | " + " | ".join(f"{d.month}/{d.day}({WD[d.weekday()]}) | 전주비" for d in ds) + " |")
+        print("|---|" + "---:|---:|" * len(ds))
+        for ch in chans + ["합계"]:
+            cells = [f"**{ch}**" if ch == "합계" else ch]
+            for d in ds:
+                cur, prv = agg[ch][d.isoformat()][0], agg[ch][(d - timedelta(days=7)).isoformat()][0]
+                cells += [f"{cur:,}", pct(cur, prv)]
+            print("| " + " | ".join(cells) + " |")
+        print()
 
-    w = cmp["전주"].isoformat()
-    keys = [b] + [d.isoformat() for d in cmp.values()]
+    w = "전주"
+    keys = list(periods)
 
     def product_table(ch, title, rising):
         items = [(n, v) for (c, n), v in prod.items() if c == ch]
@@ -256,14 +314,14 @@ def main():
         else:  # 하락 채널은 전주 대비 감소 상품 상위만
             items = [kv for kv in items if kv[1][b][0] - kv[1][w][0] < 0][:DROP_TOP]
         print(f"### {ch} 상품별 ({title}) — 매출(원)(수량)")
-        print("| 상품 | 기준일 | 전일 | 전주 | 전월 | 전주 대비 증감(원) "
-              "| 단가 기준일 | 단가 전일 | 단가 전주 | 단가 전월 | 최근단가 전월비 |")
-        print("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+        print("| 상품 | " + " | ".join(keys) + " | 전주 대비 증감(원) | "
+              + " | ".join(f"단가 {k}" for k in keys) + " | 최근단가 전월비 |")
+        print("|---|" + "---:|" * (2 * len(keys) + 2))
         for n, v in items:
             cells = [n] + [f"{v[x][0]:,}({v[x][1]})" for x in keys]
             cells.append(f"{v[b][0] - v[w][0]:+,}")
             # 단가 = 판매금액 합 / 수량 합 (할인 반영 실판매가)
-            # 최근단가 = 기준일 단가, 기준일 판매 없으면 전일 단가
+            # 최근단가 = 기준 단가, 기준 판매 없으면 직전(전일/직전3일) 단가
             up = [v[x][0] / v[x][1] if v[x][1] else None for x in keys]
             cells += [f"{u:,.0f}" if u is not None else "-" for u in up]
             recent = up[0] if up[0] is not None else up[1]
@@ -277,18 +335,17 @@ def main():
         if not a:
             continue
         cur = a[b][0]
-        chg = {k: (cur - a[cmp[k].isoformat()][0]) / a[cmp[k].isoformat()][0]
-               for k in ("전주", "전월") if a[cmp[k].isoformat()][0]}
+        chg = {k: (cur - a[k][0]) / a[k][0] for k in ("전주", "전월") if a[k][0]}
         drops = [k for k, c in chg.items() if c <= -0.10]
         if drops:
             product_table(ch, f"{'/'.join(drops)}비 -10% 이하", rising=False)
         elif chg.get("전주", 0) > 0:
             product_table(ch, f"전주비 상승, 증가 상위 {RISE_TOP}개", rising=True)
-    hourly_table(rows, [("기준일", base, base), ("최근28일", base - timedelta(days=27), base)],
-                 f"시간대별 매출 (기준일 vs 최근 28일 {(base - timedelta(days=27)).isoformat()}~{b})")
+    lab = "금토일" if weekend else "기준일"
+    hourly_table(rows, [(lab, start, base), ("최근28일", base - timedelta(days=27), base)],
+                 f"시간대별 매출 ({lab} vs 최근 28일 {(base - timedelta(days=27)).isoformat()}~{base.isoformat()})")
     print(f"취소성 제외({BRAND}): " + ", ".join(
-        f"{days[d]} {d} {cancel[d][0]}건/{cancel[d][1]:,}원" for d in days))
-
+        f"{k} {fmt(v)} {cancel[k][0]}건/{cancel[k][1]:,}원" for k, v in periods.items()))
 
 if __name__ == "__main__":
     main()

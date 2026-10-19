@@ -384,8 +384,13 @@ def status(today):
     if 1 <= today.weekday() <= 4:
         print(f"DAILY {y.isoformat()} {'READY' if got > y else 'NOT_READY'} "
               f"subject=[센티카 일일 리포트] {y.month:02d}/{y.day:02d}({WD[y.weekday()]})")
+    elif today.weekday() == 0:  # 월요일: 금~일 묶음 일일 리포트
+        f = y - timedelta(days=2)
+        print(f"DAILY {f.isoformat()}~{y.isoformat()} {'READY' if got > y else 'NOT_READY'} "
+              f"subject=[센티카 일일 리포트] {f.month:02d}/{f.day:02d}({WD[f.weekday()]})"
+              f"~{y.month:02d}/{y.day:02d}({WD[y.weekday()]})")
     else:
-        print("DAILY SKIP (월요일은 주간 리포트로 대체, 주말은 발송 안 함)")
+        print("DAILY SKIP (주말은 발송 안 함)")
     s, e = last_completed_week(today)
     wst = "SKIP(자동 발송 시작 전)" if e < FIRST_WEEK_END else ("READY" if got > e else "NOT_READY")
     print(f"WEEK {s.isoformat()}~{e.isoformat()} {wst} "
