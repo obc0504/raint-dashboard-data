@@ -18,7 +18,7 @@
   - 하락이 없고 전주비가 오른 주력 채널은 증가 상위 상품 표를 출력
   - 하락 채널 상품 표는 전주 대비 감소 상위 10개만
   - 수집시각이 기준일 이전인 채널은 미수집 경고와 제외 합계를 출력
-  - 시간대별 매출(주문 시각이 있는 채널만, 표 제목에 채널 표시): 기준일 vs 최근 28일
+  - 시간대별 매출(주문 시각이 있는 채널만, 표 제목에 채널 표시. 무신사는 주문번호의 시각): 기준일 vs 최근 28일
   - 취소성 주문 제외(정확일치 CANCELED/CANCEL/RETURNED/RETURN/EXCHANGED,
     또는 취소/반품/교환/환불/결제오류 포함), 단 '반려' 포함 시 유지
 """
@@ -29,8 +29,10 @@ from datetime import date, datetime, timedelta, timezone
 BASE = "https://raw.githubusercontent.com/obc0504/raint-dashboard-data/main/"
 BRAND = "센티카"
 FILES = ["cafe24", "wconcept", "29cm", "musinsa", "kakao", "qoo10"]
-# 채널 어드민에서 따로 받은 과거 월 데이터 (kakao.json 수동 임포트와 별개 파일)
-ARCHIVE_FILES = ["kakao-2025-12"]
+# 2025년 과거 데이터 (CLAUDE.md 참고 — 현재 파일과 중복 제거된 센티카 전용 추출분).
+# kakao가 92MB라 기간이 2025년에 걸칠 때만 받는다.
+ARCHIVE_FILES = ["archive-2025/" + f for f in ["naver", "cafe24", "29cm", "musinsa", "qoo10", "kakao"]]
+ARCHIVE_END = "2025-12-31"
 AICENT_FILES = ["gmarket_auction", "coupang_wing", "ohouse", "coupang_rocket"]
 EXACT = {"CANCELED", "CANCEL", "RETURNED", "RETURN", "EXCHANGED"}
 KEYWORDS = ["취소", "반품", "교환", "환불", "결제오류"]
@@ -57,6 +59,10 @@ def get(path, tries=4):
         try:
             with urllib.request.urlopen(BASE + path, timeout=120) as r:
                 return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 404 or i == tries - 1:  # 없는 파일은 재시도하지 않음
+                raise
+            time.sleep(2 ** (i + 1))
         except (OSError, http.client.HTTPException, ValueError):
             if i == tries - 1:
                 raise
@@ -66,8 +72,7 @@ def get(path, tries=4):
 def get_optional(path):
     """저장소에 없을 수도 있는 파일: 404면 빈 목록."""
     try:
-        with urllib.request.urlopen(BASE + path, timeout=120) as r:
-            return json.loads(r.read().decode("utf-8"))
+        return get(path)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return []
@@ -98,12 +103,19 @@ def pct(cur, prev):
 
 # 시간대 분석: 주문 시각이 있는 채널만 가능 (네이버 주문일시, 자사몰 결제완료일시,
 # 카톡선물·W컨셉·큐텐은 임포트가 주문일시를 저장한 행부터 — W컨셉은 원본 결제일자)
-HOUR_FIELDS = {"네이버": "주문일시", "자사몰": "결제완료일시",
+HOUR_FIELDS = {"네이버": "주문일시", "자사몰": "결제완료일시", "무신사": "주문번호",
                "카톡선물": "주문일시", "W컨셉": "주문일시", "큐텐": "주문일시"}
 TIME_BLOCKS = [(0, 6), (6, 9), (9, 12), (12, 15), (15, 18), (18, 21), (21, 24)]
 
 
 def hour_of(r):
+    if r.get("채널") == "무신사":
+        # 시각 컬럼이 없지만 주문번호가 YYYYMMDDHHMMSS + 일련번호 4자리
+        # (2026-10-19 확인: 1,998행 전부 날짜가 주문일과 일치)
+        o = str(r.get("주문번호") or "")
+        ok = (len(o) == 18 and o.isdigit() and int(o[8:10]) < 24
+              and o[:8] == str(r.get("주문일", ""))[:10].replace("-", ""))
+        return int(o[8:10]) if ok else None
     f = HOUR_FIELDS.get(r.get("채널"))
     t = str(r.get(f) or "") if f else ""
     return int(t[11:13]) if len(t) >= 13 and t[11:13].isdigit() else None
@@ -203,8 +215,9 @@ def main():
     rows = []
     for f in FILES:
         rows += get(f + ".json")
-    for f in ARCHIVE_FILES:  # 과거 월 데이터 (없으면 건너뜀)
-        rows += get_optional(f + ".json")
+    if min(min(day_labels), (base - timedelta(days=27)).isoformat()) <= ARCHIVE_END:
+        for f in ARCHIVE_FILES:  # 2025년에 걸치는 기간만
+            rows += get_optional(f + ".json")
     months = {d[:7] for d in day_labels} | {(base - timedelta(days=27)).isoformat()[:7]}
     for ym in get("naver-index.json"):
         if ym in months:
