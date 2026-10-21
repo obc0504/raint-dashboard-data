@@ -54,6 +54,17 @@ PRODUCT_ALIAS = {
 }
 
 
+# 카톡선물 센티카(뷰티) 상품 = 카톡 어드민 상품리스트(2026-10-20)에서 브랜드명이 "센티카(뷰티)"인
+# 채널상품번호. 임포트가 브랜드를 센티카로 합쳐 저장해서 상품번호로 구분한다. 새 뷰티 상품이
+# 생기면 여기에 추가.
+KAKAO_BEAUTY_IDS = {
+    "12183626", "11068503", "14487439", "12868181", "11079517", "10900604", "10853319",
+    "12045283", "12074100", "12074253", "11074617", "12626901", "12626920", "12776567",
+    "12776518", "11059590", "12156289", "11233910", "14089065", "12495579", "12183697",
+    "12694627", "12045286", "12045284", "12495512", "12156402", "12074287",
+}
+
+
 def get(path, tries=4):
     for i in range(tries):
         try:
@@ -245,6 +256,13 @@ def main():
     agg = defaultdict(lambda: defaultdict(lambda: [0, 0, set()]))
     cancel = defaultdict(lambda: [0, 0])  # label -> [제외 건수, 제외 금액]
     prod = defaultdict(lambda: defaultdict(lambda: [0, 0]))  # (채널, 상품)[label]
+    kseg = defaultdict(lambda: defaultdict(lambda: [0, 0]))  # 카톡 홈/뷰티[label] = [매출, 수량]
+    last = {}  # 채널 -> 마지막 주문일시(없으면 주문일), 브랜드 무관 — 데이터 누락 확인용
+    for r in rows:
+        ch0 = r.get("채널")
+        t = str(r.get("주문일시") or r.get("결제완료일시") or r.get("주문일") or "")
+        if ch0 and t > last.get(ch0, ""):
+            last[ch0] = t
     for r in rows:
         d = str(r.get("주문일", ""))[:10]
         if d not in day_labels or (r.get("브랜드") or "센티카") != BRAND:
@@ -267,6 +285,10 @@ def main():
             pr = prod[(ch, PRODUCT_ALIAS.get(name, name))][lab]
             pr[0] += amt
             pr[1] += r.get("수량") or 0
+            if ch == "카톡선물":
+                ks = kseg["뷰티" if str(r.get("상품번호")) in KAKAO_BEAUTY_IDS else "홈"][lab]
+                ks[0] += amt
+                ks[1] += r.get("수량") or 0
 
     b = "기준"
     title = "금·토·일 매출 비교 (월요일 발송분)" if weekend else "일일 매출 비교"
@@ -282,11 +304,23 @@ def main():
         got = datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(kst).date()
         if got <= base:
             stale += [c for c in chs if c in agg]
+    # 수집 시각은 갱신됐는데 주문 행이 기준일까지 안 들어온 경우(매일 주문이 있는 채널만 확인).
+    # 네이버는 마지막 주문이 기준일 22시 전이면 중간에 수집이 끊긴 것으로 본다.
+    for c in ("카톡선물", "자사몰", "네이버"):
+        t = last.get(c, "")
+        if c in stale or not t:
+            continue
+        if t[:10] < base.isoformat():
+            stale.append(c)
+            print(f"⚠️ {c}: 주문 데이터가 {t[:10]}까지만 있음")
+        elif c == "네이버" and t[:10] == base.isoformat() and len(t) >= 13 and int(t[11:13]) < 22:
+            stale.append(c)
+            print(f"⚠️ 네이버: 기준일 주문이 {t[11:16]}까지만 있음 (수집 중단 의심)")
     if stale:
         ok = [c for c in agg if c != "합계" and c not in stale]
         def tot(lab):
             return sum(agg[c][lab][0] for c in ok)
-        print(f"⚠️ 데이터 미수집 의심: {', '.join(stale)} (수집시각이 기준일 이전) — 해석에서 제외")
+        print(f"⚠️ 데이터 미수집 의심: {', '.join(stale)} (수집시각 또는 주문 데이터가 기준일 이전) — 해석에서 제외")
         print(f"미수집 채널 제외 합계: 기준 {tot(b):,} / " + " / ".join(
             f"{k} {tot(k):,} ({pct(tot(b), tot(k))})" for k in cmp))
     print()
@@ -318,6 +352,20 @@ def main():
                  f"{co:,}", f"{po:,}", f"{co - po:+,} ({pct(co, po)})"]
         print("| " + " | ".join(cells) + " |")
     print()
+    if kseg:  # 카톡선물 홈/뷰티 (상품번호 기준)
+        print("### 카톡선물 센티카(홈) vs 센티카(뷰티) (뷰티 = 어드민 브랜드명 센티카(뷰티) 상품번호)")
+        print("| 구분 | 기준 매출(원) | 기준 수량 | " + " | ".join(f"{k} 매출 | {k}비" for k in cmp) + " | 기준 비중 |")
+        print("|---|---:|---:|" + "---:|---:|" * len(cmp) + "---:|")
+        ktot = {lab: sum(kseg[g][lab][0] for g in ("홈", "뷰티")) for lab in periods}
+        for g in ("홈", "뷰티", "합계"):
+            v = (lambda lab: ktot[lab]) if g == "합계" else (lambda lab, g=g: kseg[g][lab][0])
+            q = sum(kseg[x][b][1] for x in ("홈", "뷰티")) if g == "합계" else kseg[g][b][1]
+            cells = [f"**카톡 {g}**" if g == "합계" else f"센티카({g})", f"{v(b):,}", f"{q:,}"]
+            for k in cmp:
+                cells += [f"{v(k):,}", pct(v(b), v(k))]
+            cells.append(f"{v(b) / ktot[b] * 100:.1f}%" if ktot[b] else "-")
+            print("| " + " | ".join(cells) + " |")
+        print()
     if weekend:  # 요일별 (각 요일 vs 전주 같은 요일)
         ds = [start + timedelta(days=i) for i in range(span)]
         print("### 요일별 합계 (vs 전주 같은 요일)")

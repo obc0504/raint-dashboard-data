@@ -383,9 +383,26 @@ def collected(meta):
     return min(out)
 
 
+def data_through():
+    """주문 데이터가 실제로 채워진 마지막 날짜(KST). 수집 시각이 갱신돼도 주문 행이
+    안 늘어나는 경우가 있어서(2026-10-20 수동 채널, 10-21 네이버·자사몰) 직접 확인한다.
+      - 카톡선물·자사몰: 마지막 주문일 (매일 주문이 있는 채널)
+      - 네이버: 마지막 주문 시각이 22시 이후면 그날까지, 아니면 전날까지"""
+    out = {}
+    for f, ch in (("kakao", "카톡선물"), ("cafe24", "자사몰")):
+        out[ch] = date.fromisoformat(max(str(r.get("주문일", ""))[:10] for r in get(f + ".json")))
+    last = max(str(r.get("주문일시") or "") for r in get(f"naver/{get('naver-index.json')[-1]}.json"))
+    d = date.fromisoformat(last[:10])
+    out["네이버"] = d if int(last[11:13]) >= 22 else d - timedelta(days=1)
+    return out
+
+
 def status(today):
-    """오늘(평일) 처리할 리포트와 준비 여부. 수집 날짜 > 대상 기간 마지막 날이면 READY."""
+    """오늘(평일) 처리할 리포트와 준비 여부. 수집 날짜 > 대상 기간 마지막 날이고
+    주요 채널 주문 데이터가 그 날까지 있으면 READY."""
     got = collected(get("meta.json"))
+    thru = data_through()
+    got = min(got, min(thru.values()) + timedelta(days=1))
     y = today - timedelta(days=1)
     if 1 <= today.weekday() <= 4:
         print(f"DAILY {y.isoformat()} {'READY' if got > y else 'NOT_READY'} "
@@ -406,7 +423,8 @@ def status(today):
     mst = "SKIP(자동 발송 시작 전)" if (py, pm) < FIRST_MONTH else ("READY" if got > me else "NOT_READY")
     print(f"MONTH {py}-{pm:02d} {mst} "
           f"subject=[센티카 월간 리포트] {py}-{pm:02d}")
-    print(f"(센티카 데이터 수집 날짜 KST: {got.isoformat()})")
+    print(f"(센티카 데이터 수집 날짜 KST: {got.isoformat()} / 주문 데이터 마지막 날: "
+          + ", ".join(f"{ch} {d.isoformat()}" for ch, d in thru.items()) + ")")
 
 
 # 시간대 분석: 주문 시각이 있는 채널만 가능 (네이버 주문일시, 자사몰 결제완료일시,
