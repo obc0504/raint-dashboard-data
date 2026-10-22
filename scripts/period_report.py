@@ -374,10 +374,15 @@ def month_ready(today):
     print(f"{y}-{m:02d} READY" if not late else f"{y}-{m:02d} NOT_READY: " + ", ".join(late))
 
 
+# 발송 여부를 막는 채널: 매출 대부분인 카톡·자사몰·네이버만. 무신사·29CM·W컨셉·큐텐은
+# 주문이 하루 0~수 건이라 임포트가 빠져도 보류하지 않고, 리포트 맨 위 미수집 경고로만 표시.
+GATE_FILES = ["kakao", "cafe24", "naver"]
+
+
 def collected(meta):
-    """센티카 파일별 수집 날짜(KST) 중 가장 늦지 않은(가장 이른) 날짜."""
+    """발송 판단 채널(GATE_FILES)의 수집 날짜(KST) 중 가장 이른 날짜."""
     out = []
-    for f in FILES + ["naver"]:
+    for f in GATE_FILES:
         t = meta.get(f)
         out.append(datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(KST).date() if t else date.min)
     return min(out)
@@ -398,8 +403,8 @@ def data_through():
 
 
 def status(today):
-    """오늘(평일) 처리할 리포트와 준비 여부. 수집 날짜 > 대상 기간 마지막 날이고
-    주요 채널 주문 데이터가 그 날까지 있으면 READY."""
+    """오늘(평일) 처리할 리포트와 준비 여부. 카톡·자사몰·네이버의 수집 날짜 > 대상 기간
+    마지막 날이고 주문 데이터가 그 날까지 있으면 READY. 그 외 채널 미수집은 경고로만 표시."""
     got = collected(get("meta.json"))
     thru = data_through()
     got = min(got, min(thru.values()) + timedelta(days=1))
@@ -423,6 +428,11 @@ def status(today):
     mst = "SKIP(자동 발송 시작 전)" if (py, pm) < FIRST_MONTH else ("READY" if got > me else "NOT_READY")
     print(f"MONTH {py}-{pm:02d} {mst} "
           f"subject=[센티카 월간 리포트] {py}-{pm:02d}")
+    meta = get("meta.json")
+    late = [f for f in FILES if f not in GATE_FILES and meta.get(f)
+            and datetime.fromisoformat(meta[f].replace("Z", "+00:00")).astimezone(KST).date() <= y]
+    if late:
+        print(f"WARN 미갱신(발송은 진행, 리포트에 미수집 표시): {', '.join(late)}")
     print(f"(센티카 데이터 수집 날짜 KST: {got.isoformat()} / 주문 데이터 마지막 날: "
           + ", ".join(f"{ch} {d.isoformat()}" for ch, d in thru.items()) + ")")
 
