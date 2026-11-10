@@ -1,0 +1,24 @@
+diff --git a/package.json b/package.json
+index 97f13e6..2f52967 100644
+--- a/package.json
++++ b/package.json
+@@ -20,6 +20,7 @@
+     "import:29cm": "node scripts/import-29cm.mjs",
+     "import:musinsa": "node scripts/import-musinsa.mjs",
+     "import:kakao": "node scripts/import-kakao.mjs",
++    "import:funnel": "node scripts/import-funnel.mjs",
+     "import:qoo10": "node scripts/import-qoo10.mjs",
+     "import:gmarket-auction": "node scripts/import-gmarket-auction.mjs",
+     "import:coupang-wing": "node scripts/import-coupang-wing.mjs",
+diff --git a/scripts/import-all.mjs b/scripts/import-all.mjs
+index d7c7fa0..30aecf5 100644
+--- a/scripts/import-all.mjs
++++ b/scripts/import-all.mjs
+@@ -30,6 +30,7 @@ const SCRIPTS = [
+   ['쿠팡윙', 'import-coupang-wing.mjs'],
+   ['오늘의집', 'import-ohouse.mjs'],
+   ['쿠팡로켓', 'import-coupang-rocket.mjs'],
++  ['전환율(방문분석)', 'import-funnel.mjs'],
+ ];
+ 
+ const results = [];
