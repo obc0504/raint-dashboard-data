@@ -60,7 +60,9 @@ for (const f of files) {
   const h = new Set(Object.keys(rows[0] || {}));
   let target = null;
   if (['날짜', '채널상품번호', '방문수'].every((c) => h.has(c))) {
-    const r = dateRange(rows.map((x) => x['날짜']));
+    // 2026-11-11부터 파일에 '날짜 기준' 컬럼(조회기간/비교기간)이 추가됨 — 비교기간 행은 제외하고 조회기간으로만 파일명을 정한다
+    const own = rows.filter((x) => !('날짜 기준' in x) || String(x['날짜 기준']).trim() === '조회기간');
+    const r = dateRange(own.map((x) => x['날짜']));
     if (r) target = `네이버_방문분석_센티카_${r[0]}_${r[1].slice(5)}.xlsx`;
   } else if (['상품명', '기간', '주문건수'].every((c) => h.has(c))) {
     const r = dateRange(rows.map((x) => x['기간']));
