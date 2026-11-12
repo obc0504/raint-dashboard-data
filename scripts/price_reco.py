@@ -12,6 +12,18 @@ s, e = sys.argv[1:3]
 S, E = date.fromisoformat(s), date.fromisoformat(e)
 W0 = (E - timedelta(days=89)).isoformat()
 NAMES = {}
+# 행사 기간 제외: scripts/price_events.json (channel, start, end, name). MD가 알려주는 행사 구간은 추천가 계산에서 뺀다.
+import json, urllib.request
+EVENTS = []
+try:
+    _u = "https://raw.githubusercontent.com/obc0504/raint-dashboard-data/claude/sentica-acent-sales-analysis-7hnbo0/scripts/price_events.json"
+    EVENTS = json.load(urllib.request.urlopen(_u, timeout=20))
+except Exception:
+    try: EVENTS = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "price_events.json")))
+    except Exception: EVENTS = []
+def in_event(ch, ds):
+    base = "카톡선물" if str(ch).startswith("카톡선물") else ch
+    return any(ev.get("channel") == base and ev["start"] <= ds <= ev["end"] for ev in EVENTS)
 rows = []
 for f in d.FILES: rows += d.get(f + ".json")
 for ym in d.get("naver-index.json"):
@@ -45,12 +57,16 @@ def analyze(k):
     cal = []; price = None; day_i = date.fromisoformat(first)
     while day_i <= last_day:
         ds = day_i.isoformat()
-        if ds in days:
+        ev = in_event(k[0], ds)
+        if ev:
+            q = a = sold = 0   # 행사 구간은 추천가 계산에서 제외(가격 이어짐도 갱신하지 않음)
+        elif ds in days:
             price = max(days[ds].items(), key=lambda kv: kv[1][0])[0]
             q = sum(v[0] for v in days[ds].values()); a = sum(v[1] for v in days[ds].values()); sold = 1
         else:
             q = a = sold = 0
-        cal.append((ds, price, q, a, sold)); day_i += timedelta(days=1)
+        if not ev and price is not None: cal.append((ds, price, q, a, sold))
+        day_i += timedelta(days=1)
     g = defaultdict(lambda: [0, 0, 0, 0, None, None])
     for ds, p, q, a, sold in cal:
         x = g[p]; x[0] += 1; x[1] += q; x[2] += a; x[3] += sold
@@ -59,6 +75,11 @@ def analyze(k):
 def won(v): return f"{round(v):,}"
 print(f"## 채널별 메인상품 추천 판매가 — 기준 {s}~{e}, 분석 구간 {W0}~{e}(최근 90일)")
 print("계산: 최종 구매가(판매금액 ÷ 수량, 쿠폰 차감 후, 100원 단위) 별로 그 가격이 이어진 기간의 일평균 매출(= 기간 매출 합 ÷ 달력 일수)을 비교해 가장 높은 가격을 추천가로 표시. 달력 5일 미만·판매일 3일 미만 가격은 제외. 행사·쿠폰·노출 변화 등 가격 외 요인은 반영하지 않은 관찰값(인과 아님).")
+_ev = [ev for ev in EVENTS if ev["end"] >= W0 and ev["start"] <= e]
+if _ev:
+    print("행사 구간 제외(계산에서 뺀 날): " + "; ".join(f"{ev['channel']} {ev['start'][5:]}~{ev['end'][5:]} {ev.get('name','')}" for ev in _ev))
+else:
+    print("행사 구간 제외: 현재 분석 구간에 등록된 행사 없음. 행사 기간을 알려주시면 제외 후 다시 계산합니다(자동으로 '행사·이벤트 구간 가능성'으로 표시되는 행은 확인 필요).")
 for ch in ["카톡선물(홈)", "카톡선물(뷰티)"] + CH[1:]:
     items = sorted(((k, v) for k, v in cur.items() if k[0] == ch), key=lambda x: -x[1][0])[:5]
     if not items: continue
