@@ -228,6 +228,47 @@ def one_to_one(data, main, comp, title, div=1):
     print()
 
 
+def aov_table(data, main, comps, title):
+    """객단가 = 매출 ÷ 주문 건수(대시보드와 동일). comps = [(label, 나눗수)] — 나눗수는 비율에서 상쇄된다."""
+    print(f"### {title}")
+    print("| 채널 | 주문(건) | 객단가(원) | " + " | ".join(f"{k} 객단가 | {k}비" for k, _ in comps) + " |")
+    print("|---|---:|---:|" + "---:|---:|" * len(comps))
+    av = lambda v: v[0] / v[2] if v[2] else 0
+    for ch in data.channels(main) + ["합계"]:
+        m = data.val(ch, main)
+        cells = [f"**{ch}**" if ch == "합계" else ch, num(m[2]), f"{round(av(m)):,}"]
+        for k, dv in comps:
+            p = av(data.val(ch, k, dv))
+            cells += [f"{round(p):,}", pct(av(m), p) if (m[2] or p) else "-"]
+        print("| " + " | ".join(cells) + " |")
+    print()
+    k0, dv0 = comps[0]
+    m, p = data.agg["합계"][main], data.agg["합계"][k0]
+    co, po = len(m[2]), len(p[2])
+    if co and po and m[1] and p[1]:
+        a1, a0 = m[0] / co, p[0] / po
+        q1, q0, u1, u0 = m[1] / co, p[1] / po, m[0] / m[1], p[0] / p[1]
+        mix = rate = 0.0
+        contrib = []
+        for c in data.channels(main):
+            n1, n0 = len(data.agg[c][main][2]), len(data.agg[c][k0][2])
+            w1, w0 = n1 / co, n0 / po
+            x1 = data.agg[c][main][0] / n1 if n1 else 0
+            x0 = data.agg[c][k0][0] / n0 if n0 else 0
+            if n1 and n0:
+                m_, r_ = (w1 - w0) * x0, w1 * (x1 - x0)
+            else:
+                m_, r_ = (w1 * x1 - w0 * x0), 0.0
+            mix += m_; rate += r_; contrib.append((c, m_ + r_))
+        contrib.sort(key=lambda x: -abs(x[1]))
+        print(f"- 합계 객단가 {a1:,.0f}원({k0} {a0:,.0f}원, {pct(a1, a0)}) = 주문당 수량 {q1:.3f}개({q0:.3f}개, {pct(q1, q0)}) "
+              f"× 개당 단가 {u1:,.0f}원({u0:,.0f}원, {pct(u1, u0)}) — 객단가는 매출 ÷ 주문이고 개당 단가(매출 ÷ 수량)와 다른 지표")
+        print(f"- 매출 {pct(m[0], p[0])} ≈ 주문 수 {pct(co, po)}({po:,}건 → {co:,}건) × 객단가 {pct(a1, a0)}")
+        print(f"- 객단가 증감 {a1 - a0:+,.0f}원 = 채널 구성 {mix:+,.0f}원 + 채널 내 객단가 {rate:+,.0f}원 "
+              f"(채널별 기여: " + ", ".join(f"{c} {v:+,.0f}원" for c, v in contrib[:4]) + ")")
+        print()
+
+
 def product_tables(data, main, comp, comp_name):
     """주력 채널별: 비교 기간 대비 -10% 이하면 감소 상위, 올랐으면 증가 상위 상품."""
     for ch in MAIN_CHANNELS:
@@ -286,6 +327,7 @@ def week_report(ref):
     print(f"## A. 금·토·일 ({span(fri, e)}) — 평일 일일 리포트가 없는 3일")
     channel_table(data, "금토일", [("전주 금토일", 1)], f"A-1. 금·토·일 3일 합계 (vs 전주 금·토·일 {span(fri - timedelta(days=7), pe)})")
     one_to_one(data, "금토일", "전주 금토일", "A-2. 금·토·일 1:1 비교 (매출/수량/주문)")
+    aov_table(data, "금토일", [("전주 금토일", 1)], "A-2b. 금·토·일 객단가 (매출 ÷ 주문 건수, 대시보드 기준)")
     print("### A-3. 요일별 (합계)")
     print("| 요일 | 매출(원) | 수량(개) | 주문(건) | 전주 같은 요일 매출 | 전주비 | 전주 수량 | 전주 주문 |")
     print("|---|---:|---:|---:|---:|---:|---:|---:|")
@@ -310,6 +352,7 @@ def week_report(ref):
     print(f"## B. 한 주 전체 ({span(s, e)})")
     channel_table(data, "이번주", [("전주", 1), ("4주평균", 4)], "B-1. 채널별 주간 실적 (4주평균은 4주 합계 ÷ 4)")
     one_to_one(data, "이번주", "전주", "B-2. 전주 1:1 비교 (매출/수량/주문)")
+    aov_table(data, "이번주", [("전주", 1), ("4주평균", 4)], "B-2b. 주간 객단가 (매출 ÷ 주문 건수, 대시보드 기준)")
     print("### B-3. 일자별 흐름 (합계)")
     print("| 일자 | 매출(원) | 수량(개) | 주문(건) | 전주 같은 요일 매출 | 전주비 |")
     print("|---|---:|---:|---:|---:|---:|")
@@ -353,6 +396,7 @@ def month_report(y, m):
               f"| {num(a[1])} | {num(b[1])} | {num(a[2])} | {num(b[2])} |")
     print()
     one_to_one(data, "이번달", "전월", "3. 전월 1:1 비교 (월 합계, 매출/수량/주문)")
+    aov_table(data, "이번달", [("전월", 1)], "3b. 월간 객단가 (매출 ÷ 주문 건수, 대시보드 기준)")
     print("### 4. 월간 상품별 (vs 전월)")
     product_tables(data, "이번달", "전월", "전월")
     hourly_table(data.rows, [("이번달", s, e), ("전월", ps, pe)], "5. 시간대별 매출 (이번달 / 전월)")

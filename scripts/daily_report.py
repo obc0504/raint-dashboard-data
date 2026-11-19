@@ -352,6 +352,43 @@ def main():
                  f"{co:,}", f"{po:,}", f"{co - po:+,} ({pct(co, po)})"]
         print("| " + " | ".join(cells) + " |")
     print()
+    # 객단가 = 매출 ÷ 주문 건수 (대시보드와 동일: 센티카·취소성 제외, 주문번호 고유 건수)
+    def aov(a):
+        return a[0] / len(a[2]) if a[2] else 0
+    print("### 객단가 (매출 ÷ 주문 건수, 대시보드 기준)")
+    print("| 채널 | 기준 주문(건) | 기준 객단가(원) | " + " | ".join(f"{k} 객단가 | {k}비" for k in cmp) + " |")
+    print("|---|---:|---:|" + "---:|---:|" * len(cmp))
+    for ch in chans + ["합계"]:
+        cur = agg[ch][b]
+        cells = [f"**{ch}**" if ch == "합계" else ch, f"{len(cur[2]):,}", f"{round(aov(cur)):,}"]
+        for k in cmp:
+            p = aov(agg[ch][k])
+            cells += [f"{round(p):,}", pct(aov(cur), p) if (cur[2] or p) else "-"]
+        print("| " + " | ".join(cells) + " |")
+    print()
+    cur, prv = agg["합계"][b], agg["합계"][one]
+    co, po = len(cur[2]), len(prv[2])
+    if co and po and cur[1] and prv[1]:
+        a1, a0 = cur[0] / co, prv[0] / po
+        q1, q0, u1, u0 = cur[1] / co, prv[1] / po, cur[0] / cur[1], prv[0] / prv[1]
+        mix = rate = 0.0
+        contrib = []
+        for c in chans:
+            n1, n0 = len(agg[c][b][2]), len(agg[c][one][2])
+            w1, w0 = n1 / co, n0 / po
+            x1, x0 = aov(agg[c][b]), aov(agg[c][one])
+            if n1 and n0:
+                m_, r_ = (w1 - w0) * x0, w1 * (x1 - x0)
+            else:
+                m_, r_ = (w1 * x1 - w0 * x0), 0.0
+            mix += m_; rate += r_; contrib.append((c, m_ + r_))
+        contrib.sort(key=lambda x: -abs(x[1]))
+        print(f"- 합계 객단가 {a1:,.0f}원({one} {a0:,.0f}원, {pct(a1, a0)}) = 주문당 수량 {q1:.3f}개({q0:.3f}개, {pct(q1, q0)}) "
+              f"× 개당 단가 {u1:,.0f}원({u0:,.0f}원, {pct(u1, u0)}) — 객단가는 매출 ÷ 주문이고 개당 단가(매출 ÷ 수량)와 다른 지표")
+        print(f"- 매출 {pct(cur[0], prv[0])} ≈ 주문 수 {pct(co, po)}({po:,}건 → {co:,}건) × 객단가 {pct(a1, a0)}")
+        print(f"- 객단가 증감 {a1 - a0:+,.0f}원 = 채널 구성 {mix:+,.0f}원 + 채널 내 객단가 {rate:+,.0f}원 "
+              f"(채널별 기여: " + ", ".join(f"{c} {v:+,.0f}원" for c, v in contrib[:4]) + ")")
+        print()
     if kseg:  # 카톡선물 홈/뷰티 (상품번호 기준)
         print("### 카톡선물 센티카(홈) vs 센티카(뷰티) (뷰티 = 어드민 브랜드명 센티카(뷰티) 상품번호)")
         print("| 구분 | 기준 매출(원) | 기준 수량 | " + " | ".join(f"{k} 매출 | {k}비" for k in cmp) + " | 기준 비중 |")
